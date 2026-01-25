@@ -12,7 +12,7 @@
     <ProductVersion>10.0.20506</ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
     <RootNamespace>Modules.Inventories.Tests</RootNamespace>
-    <ProjectGuid>{70f08f24-faec-49f1-6093-4ab42115f355}</ProjectGuid>
+    <ProjectGuid>{61e2f56e-4e68-8cf1-1d1f-fc19350f31cc}</ProjectGuid>
     <ProjectTypeGuids>{E097FAD1-6243-4DAD-9C02-E9B9EFC3FFC1};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
@@ -441,7 +441,7 @@
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.2.15f1\Editor\Data\PlaybackEngines\WindowsStandaloneSupport\UnityEditor.WindowsStandalone.Extensions.dll</HintPath>
     </Reference>
     <Reference Include="nunit.framework">
-      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\Library\PackageCache\com.unity.ext.nunit@031a54704bff\net40\unity-custom\nunit.framework.dll</HintPath>
+      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\UnitTests\Library\PackageCache\com.unity.ext.nunit@031a54704bff\net40\unity-custom\nunit.framework.dll</HintPath>
     </Reference>
     <Reference Include="mscorlib">
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.2.15f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\mscorlib.dll</HintPath>
@@ -819,21 +819,21 @@
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.2.15f1\Editor\Data\UnityReferenceAssemblies\unity-4.8-api\Facades\System.Xml.XPath.XDocument.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.TestRunner">
-      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\Library\ScriptAssemblies\UnityEngine.TestRunner.dll</HintPath>
+      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\UnitTests\Library\ScriptAssemblies\UnityEngine.TestRunner.dll</HintPath>
     </Reference>
     <Reference Include="UnityEditor.TestRunner">
-      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\Library\ScriptAssemblies\UnityEditor.TestRunner.dll</HintPath>
+      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\UnitTests\Library\ScriptAssemblies\UnityEditor.TestRunner.dll</HintPath>
     </Reference>
     <Reference Include="UnityEditor.UI">
-      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\Library\ScriptAssemblies\UnityEditor.UI.dll</HintPath>
+      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\UnitTests\Library\ScriptAssemblies\UnityEditor.UI.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\Library\ScriptAssemblies\UnityEngine.UI.dll</HintPath>
+      <HintPath>C:\Users\Beshamon\Documents\GitHub\UnitTest\UnitTests\Library\ScriptAssemblies\UnityEngine.UI.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="Modules.Inventories.csproj">
-      <Project>{6e010953-0d06-7c30-d255-14ae980b5682}</Project>
+      <Project>{d46375d4-5d18-d17f-bf94-b244aef0ba88}</Project>
       <Name>Modules.Inventories</Name>
     </ProjectReference>
   </ItemGroup>

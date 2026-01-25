@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 namespace Modules.Inventories
@@ -38,7 +39,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentException("items can't be null", nameof(items));
+                throw new ArgumentNullException(nameof(items));
 
             AddItemsWithPosition(items);
         }
@@ -50,7 +51,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentException("items can't be null", nameof(items));
+                throw new ArgumentNullException( nameof(items));
 
             AddItemsWithoutPosition(items);
         }
@@ -62,7 +63,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentException("items can't be null", nameof(items));
+                throw new ArgumentNullException(nameof(items));
 
             AddItemsWithPosition(items);
         }
@@ -74,7 +75,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentException("items can't be null", nameof(items));
+                throw new ArgumentNullException( nameof(items));
 
             AddItemsWithoutPosition(items);
         }
@@ -82,12 +83,18 @@ namespace Modules.Inventories
         /// <summary>
         /// Creates new inventory 
         /// </summary>
-        public Inventory(Inventory inventory) : this(inventory.Width, inventory.Height)
+        public Inventory(Inventory inventory)
         {
             if (inventory == null)
-                throw new ArgumentException("inventory can't be null", nameof(inventory));
+                throw new ArgumentNullException(nameof(inventory));
 
-            //TODO: Доделать добавление итемов 
+            Width = inventory.Width;
+            Height = inventory.Height;
+
+            _inventory = new Item[Width, Height];
+            _inventoryItems = new Dictionary<Item, Vector2Int>(inventory.Count);
+
+            CopyFrom(inventory);
         }
 
         /// <summary>
@@ -307,8 +314,10 @@ namespace Modules.Inventories
 
         public Item GetItem(int x, int y)
         {
-            var item = _inventory[x, y];
-            return item ?? throw new NullReferenceException("no item was found at the specified position");
+            if (x < 0 || x >= Width || y < 0 || y >= Height)
+                throw new IndexOutOfRangeException("position outside of inventory");
+
+            return _inventory[x, y];
         }
 
         public bool TryGetItem(Vector2Int position, out Item item)
@@ -318,6 +327,12 @@ namespace Modules.Inventories
 
         public bool TryGetItem(int x, int y, out Item item)
         {
+            if (x < 0 || x >= Width || y < 0 || y >= Height)
+            {
+                item = null;
+                return false;
+            }
+
             item = _inventory[x, y];
             return item != null;
         }
@@ -393,6 +408,9 @@ namespace Modules.Inventories
 
             if (!_inventoryItems.TryGetValue(item, out var oldPosition))
                 return false;
+            
+            if (!IsPositionWithinBounds(position, item.Size))
+                return false;
 
             RemoveItemFromGrid(item, out _);
 
@@ -412,7 +430,33 @@ namespace Modules.Inventories
         /// </summary>
         public void OptimizeSpace()
         {
-            throw new NotImplementedException();
+            if (_inventoryItems.Count == 0)
+                return;
+            
+            var sortedItems = new List<Item>(_inventoryItems.Keys);
+            
+            sortedItems.Sort((a, b) =>
+            {
+                var areaComparison = (b.Size.x * b.Size.y).CompareTo(a.Size.x * a.Size.y);
+                if (areaComparison != 0)
+                    return areaComparison;
+              
+                var widthComparison = b.Size.x.CompareTo(a.Size.x);
+                if (widthComparison != 0)
+                    return widthComparison;
+
+                return b.Size.x.CompareTo(a.Size.x);
+            });
+            
+            Array.Clear(_inventory, 0, _inventory.Length);
+            
+            foreach (var item in sortedItems)
+            {
+                if (!FindFreePosition(item.Size, out var position))
+                    throw new ArgumentException("error reorganizing space");
+            
+                PlaceItem(item, position);
+            }
         }
 
         /// <summary>
@@ -434,10 +478,10 @@ namespace Modules.Inventories
         public void CopyTo(Item[,] matrix)
         {
             if (matrix == null)
-                throw new ArgumentNullException(nameof(matrix), "The matrix can't be empty");
+                throw new ArgumentNullException(nameof(matrix), "matrix can't be empty");
 
             if (matrix.GetLength(0) != Width || matrix.GetLength(1) != Height)
-                throw new ArgumentException("the matrix size doesn't match the dimensions");
+                throw new ArgumentException("matrix size doesn't match the dimensions");
 
             Array.Copy(_inventory, matrix, _inventory.Length);
         }
@@ -447,7 +491,21 @@ namespace Modules.Inventories
         /// </summary>
         public override string ToString()
         {
-            throw new NotImplementedException();
+            var stringBuilder = new StringBuilder();
+
+            for (int y = 0; y < Height; y++)
+            {
+                for (int x = 0; x < Width; x++)
+                {
+                    var item = _inventory[x, y];
+                    stringBuilder.Append(item == null
+                        ? ". "
+                        : $"{item.Name[0]} ");
+                }
+                stringBuilder.AppendLine();
+            }
+
+            return stringBuilder.ToString();
         }
 
         #region Helpers
@@ -498,12 +556,6 @@ namespace Modules.Inventories
             return true;
         }
 
-        /// <summary>
-        /// Checking if a position is inside the inventory
-        /// </summary>
-        /// <param name="position"></param>
-        /// <param name="size"></param>
-        /// <returns></returns>
         private bool IsPositionWithinBounds(Vector2Int position, Vector2Int size)
         {
             return position.x >= 0 && position.y >= 0 &&
@@ -516,6 +568,17 @@ namespace Modules.Inventories
             var endY = startY + sizeY - 1;
 
             return IsFreeSpace(startX, startY, endX, endY);
+        }
+        
+        private void CopyFrom(Inventory inventory)
+        {
+            foreach (var pair in inventory._inventoryItems)
+            {
+                var clonedItem = pair.Key.Clone();
+                var position = pair.Value;
+
+                AddItem(clonedItem, position);
+            }
         }
         
         private void PlaceItem(Item item, Vector2Int position)
