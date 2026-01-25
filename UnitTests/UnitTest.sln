@@ -1,0 +1,21 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modules.Inventories.Tests", "Modules.Inventories.Tests.csproj", "{70f08f24-faec-49f1-6093-4ab42115f355}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Modules.Inventories", "Modules.Inventories.csproj", "{6e010953-0d06-7c30-d255-14ae980b5682}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{70f08f24-faec-49f1-6093-4ab42115f355}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70f08f24-faec-49f1-6093-4ab42115f355}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6e010953-0d06-7c30-d255-14ae980b5682}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6e010953-0d06-7c30-d255-14ae980b5682}.Debug|Any CPU.Build.0 = Debug|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
