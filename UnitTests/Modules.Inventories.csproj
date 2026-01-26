@@ -50,8 +50,8 @@
     <Compile Include="Assets\Modules\Inventory\Scripts\InventoryEnumerator.cs" />
     <Compile Include="Assets\Modules\Inventory\Scripts\Item.cs" />
     <Compile Include="Assets\Modules\Inventory\Scripts\Inventory.cs" />
-    <Compile Include="Assets\Modules\Inventory\Scripts\SortEntryComparer.cs" />
-    <Compile Include="Assets\Modules\Inventory\Scripts\SortEntry.cs" />
+    <Compile Include="Assets\Modules\Inventory\Scripts\Sort\SortEntry.cs" />
+    <Compile Include="Assets\Modules\Inventory\Scripts\Sort\SortEntryComparer.cs" />
     <None Include="Assets\Modules\Inventory\Scripts\Modules.Inventories.asmdef" />
     <Reference Include="UnityEngine">
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.2.15f1\Editor\Data\Managed\UnityEngine\UnityEngine.dll</HintPath>
