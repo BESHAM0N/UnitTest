@@ -8,6 +8,7 @@ namespace Modules.Inventories
 
         public string Name => this.name;
         public Vector2Int Size => this.size;
+        public int CellSize => Size.x * Size.y;
         public int Id => this.id;
 
         private readonly Vector2Int size;
