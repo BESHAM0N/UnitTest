@@ -15,12 +15,17 @@ namespace Modules.Inventories
 
         public int Width { get; private set; }
         public int Height { get; private set; }
-        public int Count => _inventoryItems.Count;
+        public Item[] Items => _items;
+        public int Count => _count;
 
-        private Item[,] _inventory;
-        
-        private Dictionary<Item, Vector2Int> _inventoryItems;
-        private readonly List<Item> _sortBuffer = new();
+        private readonly Item[,] _inventory;
+        private Item[] _items;
+        private Vector2Int[] _startPositions;
+        private int _count;
+        private SortEntry[] _sortBuffer;
+        private readonly IComparer<SortEntry> _sortComparer = new SortEntryComparer();
+
+        private const int START_INVENTORY_SIZE = 4;
 
         public Inventory(int width, int height)
         {
@@ -31,7 +36,10 @@ namespace Modules.Inventories
             Height = height;
 
             _inventory = new Item[Width, Height];
-            _inventoryItems = new Dictionary<Item, Vector2Int>();
+
+            _items = new Item[START_INVENTORY_SIZE];
+            _startPositions = new Vector2Int[START_INVENTORY_SIZE];
+            _count = 0;
         }
 
         public Inventory(
@@ -53,7 +61,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentNullException( nameof(items));
+                throw new ArgumentNullException(nameof(items));
 
             AddItemsWithoutPosition(items);
         }
@@ -77,7 +85,7 @@ namespace Modules.Inventories
         ) : this(width, height)
         {
             if (items == null)
-                throw new ArgumentNullException( nameof(items));
+                throw new ArgumentNullException(nameof(items));
 
             AddItemsWithoutPosition(items);
         }
@@ -94,7 +102,11 @@ namespace Modules.Inventories
             Height = inventory.Height;
 
             _inventory = new Item[Width, Height];
-            _inventoryItems = new Dictionary<Item, Vector2Int>(inventory.Count);
+
+            var cap = Math.Max(START_INVENTORY_SIZE, inventory.Count);
+            _items = new Item[cap];
+            _startPositions = new Vector2Int[cap];
+            _count = 0;
 
             CopyFrom(inventory);
         }
@@ -126,7 +138,9 @@ namespace Modules.Inventories
             if (!CanAddItem(item, position))
                 return false;
 
-            PlaceItem(item, position);
+            FillInventoryGrid(item, position);
+            AddRecord(item, position);
+
             OnAdded?.Invoke(item, position);
             return true;
         }
@@ -161,7 +175,9 @@ namespace Modules.Inventories
             if (!FindFreePosition(item.Size, out var position))
                 return false;
 
-            PlaceItem(item, position);
+            FillInventoryGrid(item, position);
+            AddRecord(item, position);
+
             OnAdded?.Invoke(item, position);
             return true;
         }
@@ -171,9 +187,9 @@ namespace Modules.Inventories
         /// </summary>
         public bool FindFreePosition(Item item, out Vector2Int position)
         {
-            if(item == null)
+            if (item == null)
                 throw new ArgumentException("item can't be null", nameof(item));
-            
+
             return FindFreePosition(item.Size, out position);
         }
 
@@ -181,7 +197,7 @@ namespace Modules.Inventories
         {
             if (size.x <= 0 || size.y <= 0)
                 throw new ArgumentException("size must be greater 0", nameof(size));
-                
+
             return FindFreePosition(size.x, size.y, out position);
         }
 
@@ -219,7 +235,7 @@ namespace Modules.Inventories
 
             if (endX >= Width || endY >= Height)
                 throw new ArgumentException("area exceeds inventory bounds");
-        
+
             for (int y = startY; y <= endY; y++)
             {
                 for (int x = startX; x <= endX; x++)
@@ -237,7 +253,7 @@ namespace Modules.Inventories
         /// </summary>
         public bool Contains(Item item)
         {
-            return item != null && _inventoryItems.ContainsKey(item);
+            return IndexOf(item) >= 0;
         }
 
         /// <summary>
@@ -285,24 +301,29 @@ namespace Modules.Inventories
 
             return removeItem;
         }
-        
+
         private bool RemoveItemFromInventory(in Item item, out Vector2Int position)
         {
             position = default;
 
-            if (item == null || !_inventoryItems.TryGetValue(item, out position))
+            var index = IndexOf(item);
+            if (index < 0)
                 return false;
 
-            var itemSize = item.Size;
-            for (var x = position.x; x < position.x + itemSize.x; x++)
+            position = _startPositions[index];
+            ClearInventoryGridCells(item, position);
+
+            var last = _count - 1;
+            if (index != last)
             {
-                for (var y = position.y; y < position.y + itemSize.y; y++)
-                {
-                    _inventory[x, y] = null;
-                }
+                _items[index] = _items[last];
+                _startPositions[index] = _startPositions[last];
             }
 
-            _inventoryItems.Remove(item);
+            _items[last] = null;
+            _startPositions[last] = default;
+            _count--;
+
             return true;
         }
 
@@ -311,7 +332,7 @@ namespace Modules.Inventories
         /// </summary>
         public Item GetItem(Vector2Int position)
         {
-            return  GetItem(position.x, position.y);
+            return GetItem(position.x, position.y);
         }
 
         public Item GetItem(int x, int y)
@@ -356,18 +377,19 @@ namespace Modules.Inventories
         {
             positions = null;
 
-            if (item == null || !_inventoryItems.TryGetValue(item, out var startPosition))
+            var index = IndexOf(item);
+            if (index < 0)
                 return false;
 
+            var start = _startPositions[index];
             positions = new Vector2Int[item.CellSize];
-            var itemSize = item.Size;
-            var i = 0;
 
-            for (var x = 0; x < itemSize.x; x++)
+            var i = 0;
+            for (int x = 0; x < item.Size.x; x++)
             {
-                for (var y = 0; y < itemSize.y; y++)
+                for (int y = 0; y < item.Size.y; y++)
                 {
-                    positions[i++] = new Vector2Int(startPosition.x + x, startPosition.y + y);
+                    positions[i++] = new Vector2Int(start.x + x, start.y + y);
                 }
             }
 
@@ -379,11 +401,14 @@ namespace Modules.Inventories
         /// </summary>
         public void Clear()
         {
-            if (_inventoryItems.Count <= 0) 
+            if (_count <= 0)
                 return;
-            
+
             Array.Clear(_inventory, 0, _inventory.Length);
-            _inventoryItems.Clear();
+            Array.Clear(_items, 0, _count);
+            Array.Clear(_startPositions, 0, _count);
+            _count = 0;
+
             OnCleared?.Invoke();
         }
 
@@ -393,10 +418,10 @@ namespace Modules.Inventories
         public int GetItemCount(string name)
         {
             var count = 0;
-
-            foreach (var item in _inventoryItems.Keys)
+            
+            for (int i = 0; i < _count; i++)
             {
-                if (item.Name == name)
+                if (_items[i].Name == name)
                     count++;
             }
 
@@ -408,21 +433,29 @@ namespace Modules.Inventories
             if (item == null)
                 throw new ArgumentNullException(nameof(item), "item can't be null");
 
-            if (!_inventoryItems.TryGetValue(item, out var oldPosition))
+            var index = IndexOf(item);
+            if (index < 0)
                 return false;
-            
+
+            if (!IsValidItem(item))
+                return false;
+
             if (!IsPositionWithinBounds(position, item.Size))
                 return false;
 
-            RemoveItemFromInventory(item, out _);
-
-            if (!CanAddItem(item, position))
+            var oldPosition = _startPositions[index];
+            
+            ClearInventoryGridCells(item, oldPosition);
+            var canPlace = IsFreeSpaceBySize(position.x, position.y, item.Size.x, item.Size.y);
+            
+            if (!canPlace)
             {
-                PlaceItem(item, oldPosition);
+                FillInventoryGrid(item, oldPosition);
                 return false;
             }
 
-            PlaceItem(item, position);
+            FillInventoryGrid(item, position);
+            _startPositions[index] = position;
             OnMoved?.Invoke(item, position);
             return true;
         }
@@ -432,31 +465,34 @@ namespace Modules.Inventories
         /// </summary>
         public void OptimizeSpace()
         {
-            if (_inventoryItems.Count == 0)
+            if (_count == 0)
                 return;
-            
-            _sortBuffer.Clear();
-            _sortBuffer.AddRange(_inventoryItems.Keys);
-            
-            _sortBuffer.Sort((a, b) =>
+
+            EnsureSortBuffer(_count);
+
+            for (int i = 0; i < _count; i++)
             {
-                var areaComparison = (b.CellSize).CompareTo(a.CellSize);
-                if (areaComparison != 0)
-                    return areaComparison;
-                
-                var widthComparison = b.Size.x.CompareTo(a.Size.x);
-                
-                return widthComparison != 0 ? widthComparison : b.Size.y.CompareTo(a.Size.y);
-            });
+                _sortBuffer[i] = new SortEntry { Item = _items[i], Order = i };
+            }
+
+            Array.Sort(_sortBuffer, 0, _count, _sortComparer);
             
             Array.Clear(_inventory, 0, _inventory.Length);
+            Array.Clear(_items, 0, _count);
+            Array.Clear(_startPositions, 0, _count);
             
-            foreach (var item in _sortBuffer)
+            var oldCount = _count;
+            _count = 0;
+
+            for (int i = 0; i < oldCount; i++)
             {
-                if (!FindFreePosition(item.Size, out var position))
+                var item = _sortBuffer[i].Item;
+
+                if (!FindFreePosition(item.Size, out var pos))
                     throw new ArgumentException("error optimizing space");
-            
-                PlaceItem(item, position);
+
+                FillInventoryGrid(item, pos);
+                AddRecord(item, pos);
             }
         }
 
@@ -470,7 +506,7 @@ namespace Modules.Inventories
 
         public IEnumerator<Item> GetEnumerator()
         {
-            return _inventoryItems.Keys.GetEnumerator();
+            return new InventoryEnumerator(this);
         }
 
         /// <summary>
@@ -492,17 +528,22 @@ namespace Modules.Inventories
         /// </summary>
         public override string ToString()
         {
-            var stringBuilder = new StringBuilder();
+            var stringBuilder = new StringBuilder(Width * Height * 2);
 
             for (int y = 0; y < Height; y++)
             {
                 for (int x = 0; x < Width; x++)
                 {
                     var item = _inventory[x, y];
-                    stringBuilder.Append(item == null
-                        ? ". "
-                        : $"{item.Name[0]} ");
+
+                    char c =
+                        item == null ? '.' :
+                        string.IsNullOrEmpty(item.Name) ? '?' :
+                        item.Name[0];
+
+                    stringBuilder.Append(c).Append(' ');
                 }
+
                 stringBuilder.AppendLine();
             }
 
@@ -514,8 +555,6 @@ namespace Modules.Inventories
         /// <summary>
         /// Adds items to specific inventory slots
         /// </summary>
-        /// <param name="items"></param>
-        /// <exception cref="ArgumentException"></exception>
         private void AddItemsWithPosition(IEnumerable<KeyValuePair<Item, Vector2Int>> items)
         {
             foreach (var item in items)
@@ -533,8 +572,6 @@ namespace Modules.Inventories
         /// <summary>
         /// Adds items to any free inventory slots 
         /// </summary>
-        /// <param name="items"></param>
-        /// <exception cref="ArgumentException"></exception>
         private void AddItemsWithoutPosition(IEnumerable<Item> items)
         {
             foreach (var item in items)
@@ -549,16 +586,13 @@ namespace Modules.Inventories
         /// <summary>
         /// Checks whether an item is valid for placing into the inventory
         /// </summary>
-        /// <param name="item"></param>
-        /// <returns></returns>
-        /// <exception cref="ArgumentException"></exception>
         private bool IsValidItem(Item item)
         {
             if (item == null)
                 return false;
 
             if (item.Size.x <= 0 || item.Size.y <= 0)
-                throw new ArgumentException("Item size must be positive and greater than zero");
+                throw new ArgumentException("item size must be greater 0");
 
             return true;
         }
@@ -566,9 +600,6 @@ namespace Modules.Inventories
         /// <summary>
         /// Checks whether the given item position and size fit within inventory bounds
         /// </summary>
-        /// <param name="position"></param>
-        /// <param name="size"></param>
-        /// <returns></returns>
         private bool IsPositionWithinBounds(Vector2Int position, Vector2Int size)
         {
             return position.x >= 0 && position.y >= 0 &&
@@ -578,11 +609,6 @@ namespace Modules.Inventories
         /// <summary>
         /// Checks whether area in the grid is free based on width/height values
         /// </summary>
-        /// <param name="startX"></param>
-        /// <param name="startY"></param>
-        /// <param name="sizeX"></param>
-        /// <param name="sizeY"></param>
-        /// <returns></returns>
         private bool IsFreeSpaceBySize(int startX, int startY, int sizeX, int sizeY)
         {
             var endX = startX + sizeX - 1;
@@ -590,28 +616,74 @@ namespace Modules.Inventories
 
             return IsFreeSpace(startX, startY, endX, endY);
         }
-        
-        /// <summary>
-        /// Copies items from another inventory, cloning them and placing in the same positions
-        /// </summary>
-        /// <param name="inventory"></param>
-        private void CopyFrom(Inventory inventory)
-        {
-            foreach (var pair in inventory._inventoryItems)
-            {
-                var clonedItem = pair.Key.Clone();
-                var position = pair.Value;
 
-                AddItem(clonedItem, position);
-            }
-        }
-        
         /// <summary>
-        /// Fills the inventory grid with an item at the given position, occupying its size area
+        /// Returns the index of the specified item in the internal items array
         /// </summary>
-        /// <param name="item"></param>
-        /// <param name="position"></param>
-        private void PlaceItem(Item item, Vector2Int position)
+        private int IndexOf(Item item)
+        {
+            if (item == null) 
+                return -1;
+
+            for (int i = 0; i < _count; i++)
+            {
+                if (ReferenceEquals(_items[i], item))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Ensures that the sort buffer has enough capacity to store the specified number of elements
+        /// </summary>
+        private void EnsureSortBuffer(int needed)
+        {
+            if (_sortBuffer != null && _sortBuffer.Length >= needed)
+                return;
+
+            _sortBuffer = new SortEntry[Math.Max(needed, START_INVENTORY_SIZE)];
+        }
+
+        /// <summary>
+        /// Adds a new item record with its starting position to the internal storage
+        /// </summary>
+        private void AddRecord(Item item, Vector2Int position)
+        {
+            EnsureCapacity(_count + 1);
+            _items[_count] = item;
+            _startPositions[_count] = position;
+            _count++;
+        }
+
+        /// <summary>
+        /// Ensures that internal item and position arrays have sufficient capacity
+        /// </summary>
+        private void EnsureCapacity(int needed)
+        {
+            if (_items == null)
+            {
+                _items = new Item[Math.Max(START_INVENTORY_SIZE, needed)];
+                _startPositions = new Vector2Int[_items.Length];
+                return;
+            }
+
+            if (needed <= _items.Length)
+                return;
+
+            var newCap = _items.Length * 2;
+            if (newCap < needed) 
+                newCap = needed;
+
+            Array.Resize(ref _items, newCap);
+            Array.Resize(ref _startPositions, newCap);
+        }
+
+        /// <summary>
+        /// Fills the inventory grid with the given item at the specified position,
+        /// occupying all cells covered by the item's size
+        /// </summary>
+        private void FillInventoryGrid(Item item, Vector2Int position)
         {
             for (int x = position.x; x < position.x + item.Size.x; x++)
             {
@@ -620,10 +692,36 @@ namespace Modules.Inventories
                     _inventory[x, y] = item;
                 }
             }
-
-            _inventoryItems[item] = position;
         }
-        
+
+        /// <summary>
+        /// Clears all grid cells previously occupied by the specified item, 
+        /// starting from the given position
+        /// </summary>
+        private void ClearInventoryGridCells(Item item, Vector2Int position)
+        {
+            for (int x = position.x; x < position.x + item.Size.x; x++)
+            {
+                for (int y = position.y; y < position.y + item.Size.y; y++)
+                {
+                    _inventory[x, y] = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Copies items from another inventory, cloning them and placing in the same positions
+        /// </summary>
+        private void CopyFrom(Inventory inventory)
+        {
+            for (int i = 0; i < inventory._count; i++)
+            {
+                var clonedItem = inventory._items[i].Clone();
+                var position = inventory._startPositions[i];
+                AddItem(clonedItem, position);
+            }
+        }
+
         #endregion
     }
 }
