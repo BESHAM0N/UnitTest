@@ -16,15 +16,15 @@ namespace Modules.Inventories
 
         public int Width { get; private set; }
         public int Height { get; private set; }
-        public Item[] Items => _items;
+
         public int Count => _count;
 
         private readonly Item[,] _inventory;
 
-        private Item[] _items;
-        private Vector2Int[] _startPositions;
+        private Hashtable _entries;
 
         private int _count;
+        private int _capacity;
 
         private static SortEntry[] _sortBuffer;
         private static readonly IComparer<SortEntry> _sortComparer = new SortEntryComparer();
@@ -41,8 +41,8 @@ namespace Modules.Inventories
 
             _inventory = new Item[Width, Height];
 
-            _items = new Item[START_INVENTORY_SIZE];
-            _startPositions = new Vector2Int[START_INVENTORY_SIZE];
+            _capacity = START_INVENTORY_SIZE;
+            _entries = new Hashtable(_capacity);
             _count = 0;
         }
 
@@ -106,12 +106,9 @@ namespace Modules.Inventories
             Height = inventory.Height;
 
             _inventory = new Item[Width, Height];
-
-            var cap = Math.Max(START_INVENTORY_SIZE, inventory.Count);
-            _items = new Item[cap];
-            _startPositions = new Vector2Int[cap];
+            _capacity = Math.Max(START_INVENTORY_SIZE, inventory.Count);
+            _entries = new Hashtable(_capacity);
             _count = 0;
-
             CopyFrom(inventory);
         }
 
@@ -280,18 +277,17 @@ namespace Modules.Inventories
             if (index < 0)
                 return false;
 
-            position = _startPositions[index];
+            var entry = (Entry)_entries[index];
+            position = entry.StartPosition;
             ClearInventoryGridCells(item, position);
 
             var last = _count - 1;
             if (index != last)
             {
-                _items[index] = _items[last];
-                _startPositions[index] = _startPositions[last];
+                _entries[index] = _entries[last];
             }
 
-            _items[last] = null;
-            _startPositions[last] = default;
+            _entries.Remove(last);
             _count--;
 
             return true;
@@ -300,10 +296,7 @@ namespace Modules.Inventories
         /// <summary>
         /// Returns an item at specified position 
         /// </summary>
-        public Item GetItem(Vector2Int position)
-        {
-            return GetItem(position.x, position.y);
-        }
+        public Item GetItem(Vector2Int position) => GetItem(position.x, position.y);
 
         public Item GetItem(int x, int y)
         {
@@ -346,7 +339,7 @@ namespace Modules.Inventories
             if (index < 0)
                 return false;
 
-            var start = _startPositions[index];
+            var start = ((Entry)_entries[index]).StartPosition;
             positions = new Vector2Int[item.CellSize];
 
             var i = 0;
@@ -370,8 +363,7 @@ namespace Modules.Inventories
                 return;
 
             Array.Clear(_inventory, 0, _inventory.Length);
-            Array.Clear(_items, 0, _count);
-            Array.Clear(_startPositions, 0, _count);
+            _entries.Clear();
             _count = 0;
 
             OnCleared?.Invoke();
@@ -386,7 +378,8 @@ namespace Modules.Inventories
 
             for (int i = 0; i < _count; i++)
             {
-                if (_items[i].Name == name)
+                var entry = (Entry)_entries[i];
+                if (entry.Item != null && entry.Item.Name == name)
                     count++;
             }
 
@@ -402,7 +395,8 @@ namespace Modules.Inventories
             if (index < 0 || !IsValidItem(item) || !IsPositionWithinBounds(position, item.Size))
                 return false;
 
-            var oldPosition = _startPositions[index];
+            var entry = (Entry)_entries[index];
+            var oldPosition = entry.StartPosition;
 
             ClearInventoryGridCells(item, oldPosition);
             var canPlace = IsFreeSpaceBySize(position.x, position.y, item.Size.x, item.Size.y);
@@ -414,7 +408,7 @@ namespace Modules.Inventories
             }
 
             FillInventoryGrid(item, position);
-            _startPositions[index] = position;
+            entry.StartPosition = position;
             OnMoved?.Invoke(item, position);
             return true;
         }
@@ -431,14 +425,13 @@ namespace Modules.Inventories
 
             for (int i = 0; i < _count; i++)
             {
-                _sortBuffer[i] = new SortEntry { Item = _items[i], Order = i };
+                _sortBuffer[i] = new SortEntry { Item = ((Entry)_entries[i]).Item, Order = i };
             }
 
             Array.Sort(_sortBuffer, 0, _count, _sortComparer);
 
             Array.Clear(_inventory, 0, _inventory.Length);
-            Array.Clear(_items, 0, _count);
-            Array.Clear(_startPositions, 0, _count);
+            _entries.Clear();
 
             var oldCount = _count;
             _count = 0;
@@ -455,24 +448,15 @@ namespace Modules.Inventories
             }
         }
 
-        public Enumerator GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
+        public Enumerator GetEnumerator() => new(this);
 
         /// <summary>
         /// Iterates by all items 
         /// </summary>
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return GetEnumerator();
-        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        IEnumerator<Item> IEnumerable<Item>.GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
-        
+        IEnumerator<Item> IEnumerable<Item>.GetEnumerator() => new Enumerator(this);
+
         public struct Enumerator : IEnumerator<Item>
         {
             private readonly Inventory _inventory;
@@ -491,8 +475,7 @@ namespace Modules.Inventories
             }
 
             public void Reset() => _index = -1;
-
-            public Item Current => _inventory.Items[_index];
+            public Item Current => ((Entry)_inventory._entries[_index]).Item;
 
             object IEnumerator.Current => Current;
 
@@ -619,7 +602,8 @@ namespace Modules.Inventories
 
             for (int i = 0; i < _count; i++)
             {
-                if (ReferenceEquals(_items[i], item))
+                var entry = (Entry)_entries[i];
+                if (ReferenceEquals(entry.Item, item))
                     return i;
             }
 
@@ -643,8 +627,7 @@ namespace Modules.Inventories
         private void AddRecord(Item item, Vector2Int position)
         {
             EnsureCapacity(_count + 1);
-            _items[_count] = item;
-            _startPositions[_count] = position;
+            _entries[_count] = new Entry(item, position);
             _count++;
         }
 
@@ -653,23 +636,44 @@ namespace Modules.Inventories
         /// </summary>
         private void EnsureCapacity(int needed)
         {
-            if (_items == null)
+            if (needed < 0)
+                throw new ArgumentOutOfRangeException(nameof(needed));
+
+            if (_entries == null)
             {
-                _items = new Item[Math.Max(START_INVENTORY_SIZE, needed)];
-                _startPositions = new Vector2Int[_items.Length];
+                _capacity = Math.Max(START_INVENTORY_SIZE, needed);
+                _entries = new Hashtable(_capacity);
                 return;
             }
 
-            if (needed <= _items.Length)
+            if (needed <= _capacity)
                 return;
 
-            //TODO: Проверить, что int.MaxValue
-            var newCap = _items.Length * 2;
-            if (newCap < needed)
-                newCap = needed;
+            if (_capacity == int.MaxValue)
+                throw new OutOfMemoryException("inventory capacity already reached int.MaxValue");
 
-            Array.Resize(ref _items, newCap);
-            Array.Resize(ref _startPositions, newCap);
+            int newCap = _capacity;
+
+            while (newCap < needed)
+            {
+                if (newCap > int.MaxValue / 2)
+                {
+                    newCap = int.MaxValue;
+                    break;
+                }
+
+                newCap *= 2;
+            }
+
+            if (newCap < needed)
+                throw new OutOfMemoryException("requested capacity exceeds int.MaxValue");
+          
+            var newEntries = new Hashtable(newCap);
+            for (int i = 0; i < _count; i++)
+                newEntries[i] = _entries[i];
+
+            _entries = newEntries;
+            _capacity = newCap;
         }
 
         /// <summary>
@@ -709,14 +713,51 @@ namespace Modules.Inventories
         /// </summary>
         private void CopyFrom(Inventory inventory)
         {
-            for (int i = 0; i < inventory._count; i++)
+            for (int i = 0; i < inventory.Count; i++)
             {
-                var clonedItem = inventory._items[i].Clone(); //убрать клонирование
-                var position = inventory._startPositions[i];
-                AddItem(clonedItem, position);
+                var entry = (Entry)inventory._entries[i];
+                AddItem(entry.Item, entry.StartPosition);
             }
         }
 
         #endregion
+
+        private sealed class Entry
+        {
+            public Item Item;
+            public Vector2Int StartPosition;
+
+            public Entry(Item item, Vector2Int startPosition)
+            {
+                Item = item;
+                StartPosition = startPosition;
+            }
+        }
+
+        private sealed class SortEntryComparer : IComparer<SortEntry>
+        {
+            public int Compare(SortEntry a, SortEntry b)
+            {
+                var area = b.Item.CellSize.CompareTo(a.Item.CellSize);
+                if (area != 0)
+                    return area;
+
+                var width = b.Item.Size.x.CompareTo(a.Item.Size.x);
+                if (width != 0)
+                    return width;
+
+                var height = b.Item.Size.y.CompareTo(a.Item.Size.y);
+                if (height != 0)
+                    return height;
+
+                return a.Order.CompareTo(b.Order);
+            }
+        }
+
+        private struct SortEntry
+        {
+            public Item Item;
+            public int Order;
+        }
     }
 }
