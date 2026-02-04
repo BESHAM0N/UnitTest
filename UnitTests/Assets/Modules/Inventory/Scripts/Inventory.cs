@@ -20,16 +20,20 @@ namespace Modules.Inventories
         public int Count => _count;
 
         private readonly Item[,] _inventory;
+        
+        private Slot[] _slots;
+        private int[] _buckets;
 
-        private Hashtable _entries;
-
-        private int _count;
         private int _capacity;
+        private int _count;
+        private int _lastIndex;
+        private int _freeList;
 
         private static SortEntry[] _sortBuffer;
         private static readonly IComparer<SortEntry> _sortComparer = new SortEntryComparer();
 
         private const int START_INVENTORY_SIZE = 4;
+        private const int UNDEFINED_INDEX = -1;
 
         public Inventory(int width, int height)
         {
@@ -40,10 +44,7 @@ namespace Modules.Inventories
             Height = height;
 
             _inventory = new Item[Width, Height];
-
-            _capacity = START_INVENTORY_SIZE;
-            _entries = new Hashtable(_capacity);
-            _count = 0;
+            InitTable(START_INVENTORY_SIZE);
         }
 
         public Inventory(
@@ -106,9 +107,7 @@ namespace Modules.Inventories
             Height = inventory.Height;
 
             _inventory = new Item[Width, Height];
-            _capacity = Math.Max(START_INVENTORY_SIZE, inventory.Count);
-            _entries = new Hashtable(_capacity);
-            _count = 0;
+            InitTable(Math.Max(START_INVENTORY_SIZE, inventory.Count));
             CopyFrom(inventory);
         }
 
@@ -273,24 +272,55 @@ namespace Modules.Inventories
         {
             position = default;
 
-            var index = IndexOf(item);
-            if (index < 0)
+            if (item == null || _count == 0)
                 return false;
 
-            var entry = (Entry)_entries[index];
-            position = entry.StartPosition;
-            ClearInventoryGridCells(item, position);
+            int hash = GetItemHash(item);
+            int bucket = hash % _capacity;
 
-            var last = _count - 1;
-            if (index != last)
+            int index = _buckets[bucket];
+            int prev = UNDEFINED_INDEX;
+
+            while (index >= 0)
             {
-                _entries[index] = _entries[last];
+                ref Slot slot = ref _slots[index];
+
+                if (slot.exists && ReferenceEquals(slot.item, item))
+                {
+                    if (prev == UNDEFINED_INDEX)
+                        _buckets[bucket] = slot.next;
+                    else
+                        _slots[prev].next = slot.next;
+
+                    position = slot.start;
+                
+                    ClearInventoryGridCells(item, position);
+                
+                    slot.exists = false;
+                    slot.item = null;
+                    slot.start = default;
+
+                    slot.next = _freeList;
+                    _freeList = index;
+
+                    _count--;
+
+                    if (_count == 0)
+                    {
+                        Array.Fill(_buckets, UNDEFINED_INDEX);
+                        Array.Clear(_slots, 0, _lastIndex);
+                        _lastIndex = 0;
+                        _freeList = UNDEFINED_INDEX;
+                    }
+
+                    return true;
+                }
+
+                prev = index;
+                index = slot.next;
             }
 
-            _entries.Remove(last);
-            _count--;
-
-            return true;
+            return false;
         }
 
         /// <summary>
@@ -335,19 +365,19 @@ namespace Modules.Inventories
         {
             positions = null;
 
-            var index = IndexOf(item);
+            int index = IndexOf(item);
             if (index < 0)
                 return false;
 
-            var start = ((Entry)_entries[index]).StartPosition;
+            Vector2Int start = _slots[index].start;
             positions = new Vector2Int[item.CellSize];
 
-            var i = 0;
-            for (int x = 0; x < item.Size.x; x++)
+            int posIndex = 0;
+            for (int i = 0; i < item.Size.x; i++)
             {
-                for (int y = 0; y < item.Size.y; y++)
+                for (int j = 0; j < item.Size.y; j++)
                 {
-                    positions[i++] = new Vector2Int(start.x + x, start.y + y);
+                    positions[posIndex++] = new Vector2Int(start.x + i, start.y + j);
                 }
             }
 
@@ -363,8 +393,13 @@ namespace Modules.Inventories
                 return;
 
             Array.Clear(_inventory, 0, _inventory.Length);
-            _entries.Clear();
+           
+            Array.Fill(_buckets, UNDEFINED_INDEX);
+            Array.Clear(_slots, 0, _lastIndex);
+
             _count = 0;
+            _lastIndex = 0;
+            _freeList = UNDEFINED_INDEX;
 
             OnCleared?.Invoke();
         }
@@ -374,12 +409,15 @@ namespace Modules.Inventories
         /// </summary>
         public int GetItemCount(string name)
         {
-            var count = 0;
+            int count = 0;
 
-            for (int i = 0; i < _count; i++)
+            for (int i = 0; i < _lastIndex; i++)
             {
-                var entry = (Entry)_entries[i];
-                if (entry.Item != null && entry.Item.Name == name)
+                ref readonly Slot slot = ref _slots[i];
+                if (!slot.exists || slot.item == null)
+                    continue;
+
+                if (slot.item.Name == name)
                     count++;
             }
 
@@ -391,12 +429,11 @@ namespace Modules.Inventories
             if (item == null)
                 throw new ArgumentNullException(nameof(item), "item can't be null");
 
-            var index = IndexOf(item);
+            int index = IndexOf(item);
             if (index < 0 || !IsValidItem(item) || !IsPositionWithinBounds(position, item.Size))
                 return false;
 
-            var entry = (Entry)_entries[index];
-            var oldPosition = entry.StartPosition;
+            Vector2Int oldPosition = _slots[index].start;
 
             ClearInventoryGridCells(item, oldPosition);
             var canPlace = IsFreeSpaceBySize(position.x, position.y, item.Size.x, item.Size.y);
@@ -408,7 +445,8 @@ namespace Modules.Inventories
             }
 
             FillInventoryGrid(item, position);
-            entry.StartPosition = position;
+            _slots[index].start = position;
+
             OnMoved?.Invoke(item, position);
             return true;
         }
@@ -423,20 +461,32 @@ namespace Modules.Inventories
 
             EnsureSortBuffer(_count);
 
-            for (int i = 0; i < _count; i++)
+            int length = 0;
+            for (int i = 0; i < _lastIndex; i++)
             {
-                _sortBuffer[i] = new SortEntry { Item = ((Entry)_entries[i]).Item, Order = i };
+                if (!_slots[i].exists)
+                    continue;
+
+                int order = length;
+                _sortBuffer[length] = new SortEntry
+                {
+                    Item = _slots[i].item,
+                    Order = order
+                };
+                length++;
             }
 
-            Array.Sort(_sortBuffer, 0, _count, _sortComparer);
+            Array.Sort(_sortBuffer, 0, length, _sortComparer);
 
             Array.Clear(_inventory, 0, _inventory.Length);
-            _entries.Clear();
-
-            var oldCount = _count;
+            Array.Fill(_buckets, UNDEFINED_INDEX);
+            Array.Clear(_slots, 0, _lastIndex);
+            
             _count = 0;
+            _lastIndex = 0;
+            _freeList = UNDEFINED_INDEX;
 
-            for (int i = 0; i < oldCount; i++)
+            for (int i = 0; i < length; i++)
             {
                 var item = _sortBuffer[i].Item;
 
@@ -448,7 +498,7 @@ namespace Modules.Inventories
             }
         }
 
-        public Enumerator GetEnumerator() => new(this);
+        Enumerator GetEnumerator() => new(this);
 
         /// <summary>
         /// Iterates by all items 
@@ -457,31 +507,44 @@ namespace Modules.Inventories
 
         IEnumerator<Item> IEnumerable<Item>.GetEnumerator() => new Enumerator(this);
 
-        public struct Enumerator : IEnumerator<Item>
+        struct Enumerator : IEnumerator<Item>
         {
             private readonly Inventory _inventory;
-            private int _index;
+            private int _slotIndex;
+            private Item _current;
 
             public Enumerator(Inventory inventory)
             {
                 _inventory = inventory;
-                _index = -1;
+                _slotIndex = UNDEFINED_INDEX;
+                _current = null;
             }
 
             public bool MoveNext()
             {
-                _index++;
-                return _index < _inventory.Count;
+                while (++_slotIndex < _inventory._lastIndex)
+                {
+                    if (_inventory._slots[_slotIndex].exists)
+                    {
+                        _current = _inventory._slots[_slotIndex].item;
+                        return true;
+                    }
+                }
+
+                _current = null;
+                return false;
             }
 
-            public void Reset() => _index = -1;
-            public Item Current => ((Entry)_inventory._entries[_index]).Item;
+            public void Reset()
+            {
+                _slotIndex = UNDEFINED_INDEX;
+                _current = null;
+            }
 
+            public Item Current => _current;
             object IEnumerator.Current => Current;
 
-            public void Dispose()
-            {
-            }
+            public void Dispose() { }
         }
 
         /// <summary>
@@ -597,17 +660,7 @@ namespace Modules.Inventories
         /// </summary>
         private int IndexOf(Item item)
         {
-            if (item == null)
-                return -1;
-
-            for (int i = 0; i < _count; i++)
-            {
-                var entry = (Entry)_entries[i];
-                if (ReferenceEquals(entry.Item, item))
-                    return i;
-            }
-
-            return -1;
+           return FindSlotIndex(item);
         }
 
         /// <summary>
@@ -626,54 +679,34 @@ namespace Modules.Inventories
         /// </summary>
         private void AddRecord(Item item, Vector2Int position)
         {
-            EnsureCapacity(_count + 1);
-            _entries[_count] = new Entry(item, position);
+            if (_freeList < 0 && _lastIndex == _capacity)
+                IncreaseCapacity();
+
+            int hash = GetItemHash(item);
+            int bucket = hash % _capacity;
+
+            int index;
+            if (_freeList >= 0)
+            {
+                index = _freeList;
+                _freeList = _slots[index].next;
+            }
+            else
+            {
+                index = _lastIndex;
+                _lastIndex++;
+            }
+
+            _slots[index] = new Slot
+            {
+                item = item,
+                start = position,
+                exists = true,
+                next = _buckets[bucket]
+            };
+
+            _buckets[bucket] = index;
             _count++;
-        }
-
-        /// <summary>
-        /// Ensures that internal item and position arrays have sufficient capacity
-        /// </summary>
-        private void EnsureCapacity(int needed)
-        {
-            if (needed < 0)
-                throw new ArgumentOutOfRangeException(nameof(needed));
-
-            if (_entries == null)
-            {
-                _capacity = Math.Max(START_INVENTORY_SIZE, needed);
-                _entries = new Hashtable(_capacity);
-                return;
-            }
-
-            if (needed <= _capacity)
-                return;
-
-            if (_capacity == int.MaxValue)
-                throw new OutOfMemoryException("inventory capacity already reached int.MaxValue");
-
-            int newCap = _capacity;
-
-            while (newCap < needed)
-            {
-                if (newCap > int.MaxValue / 2)
-                {
-                    newCap = int.MaxValue;
-                    break;
-                }
-
-                newCap *= 2;
-            }
-
-            if (newCap < needed)
-                throw new OutOfMemoryException("requested capacity exceeds int.MaxValue");
-          
-            var newEntries = new Hashtable(newCap);
-            for (int i = 0; i < _count; i++)
-                newEntries[i] = _entries[i];
-
-            _entries = newEntries;
-            _capacity = newCap;
         }
 
         /// <summary>
@@ -713,26 +746,19 @@ namespace Modules.Inventories
         /// </summary>
         private void CopyFrom(Inventory inventory)
         {
-            for (int i = 0; i < inventory.Count; i++)
+            for (int i = 0; i < inventory._lastIndex; i++)
             {
-                var entry = (Entry)inventory._entries[i];
-                AddItem(entry.Item, entry.StartPosition);
+                if (!inventory._slots[i].exists)
+                    continue;
+
+                Item item = inventory._slots[i].item;
+                Vector2Int pos = inventory._slots[i].start;
+
+                AddItem(item, pos);
             }
         }
 
         #endregion
-
-        private sealed class Entry
-        {
-            public Item Item;
-            public Vector2Int StartPosition;
-
-            public Entry(Item item, Vector2Int startPosition)
-            {
-                Item = item;
-                StartPosition = startPosition;
-            }
-        }
 
         private sealed class SortEntryComparer : IComparer<SortEntry>
         {
@@ -759,5 +785,120 @@ namespace Modules.Inventories
             public Item Item;
             public int Order;
         }
+
+        #region Hash-table
+        
+        private struct Slot
+        {
+            public Item item;
+            public Vector2Int start;
+            public bool exists;
+            public int next;
+        }
+        
+        private void InitTable(int capacity)
+        {
+            _capacity = CeilToPrime(Math.Max(START_INVENTORY_SIZE, capacity));
+
+            _slots = new Slot[_capacity];
+            _buckets = new int[_capacity];
+            Array.Fill(_buckets, UNDEFINED_INDEX);
+
+            _count = 0;
+            _lastIndex = 0;
+            _freeList = UNDEFINED_INDEX;
+        }
+        
+        private int FindSlotIndex(Item item)
+        {
+            if (item == null || _count == 0)
+                return UNDEFINED_INDEX;
+
+            int hash = GetItemHash(item);
+            int bucket = hash % _capacity;
+
+            int index = _buckets[bucket];
+            while (index >= 0)
+            {
+                ref readonly Slot slot = ref _slots[index];
+                if (slot.exists && ReferenceEquals(slot.item, item))
+                    return index;
+
+                index = slot.next;
+            }
+
+            return UNDEFINED_INDEX;
+        }
+        
+        private void IncreaseCapacity()
+        {
+            if (_capacity > int.MaxValue / 2)
+                throw new OutOfMemoryException("inventory capacity already reached int.MaxValue");
+            
+            int newCapacity = CeilToPrime(_capacity * 2);
+
+            Array.Resize(ref _slots, newCapacity);
+            Array.Resize(ref _buckets, newCapacity);
+
+            _capacity = newCapacity;
+            Array.Fill(_buckets, UNDEFINED_INDEX);
+           
+            for (int i = 0; i < _lastIndex; i++)
+            {
+                if (!_slots[i].exists)
+                    continue;
+
+                int hash = GetItemHash(_slots[i].item);
+                int bucket = hash % _capacity;
+
+                _slots[i].next = _buckets[bucket];
+                _buckets[bucket] = i;
+            }
+        }
+        
+        private static int CeilToPrime(int value)
+        {
+            if (value <= 2) 
+                return 2;
+            
+            if ((value & 1) == 0) 
+                value++;
+
+            while (!IsPrime(value))
+                value += 2;
+
+            return value;
+        }
+        
+        private static bool IsPrime(int value)
+        {
+            switch (value)
+            {
+                case <= 1:
+                    return false;
+                case 2:
+                    return true;
+            }
+
+            if ((value & 1) == 0) 
+                return false;
+
+            int limit = (int)Math.Sqrt(value);
+            
+            for (int i = 3; i <= limit; i += 2)
+            {
+                if (value % i == 0)
+                    return false;
+            }
+
+            return true;
+        }
+        
+        private static int GetItemHash(Item item)
+        {
+            return RuntimeHelpers.GetHashCode(item) & 0x7FFFFFFF;
+        }
+
+        #endregion
     }
 }
