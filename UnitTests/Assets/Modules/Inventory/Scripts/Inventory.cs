@@ -830,9 +830,10 @@ namespace Modules.Inventories
             return UNDEFINED_INDEX;
         }
         
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void IncreaseCapacity()
         {
-            if (_capacity > int.MaxValue / 2)
+            if (_capacity > int.MaxValue * 0.5f)
                 throw new OutOfMemoryException("inventory capacity already reached int.MaxValue");
             
             int newCapacity = CeilToPrime(_capacity * 2);
